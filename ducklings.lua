@@ -15,6 +15,7 @@ function _update()
         if player_moved then
             update_player_trail()
         end
+        move_free_ducklings()
         check_hit()
         check_duckling_collision()
         update_following_ducklings()
@@ -22,7 +23,8 @@ function _update()
 end
 
 function _draw()
-    cls()
+    cls(12)
+    -- cls()
     draw_walls()
     draw_ducklings()
     draw_player()
@@ -30,10 +32,10 @@ end
 
 function make_walls()
     walls = {}
-    walls[1] = {x=0, y=0, width=2, height=120} -- left wall
-    walls[2] = {x=120, y=0, width=2, height=122} -- right wall
-    walls[3] = {x=0, y=0, width=120, height=2} -- top wall
-    walls[4] = {x=0, y=120, width=120, height=2} -- bottom wall
+    walls[1] = {x=0, y=0, width=2, height=128} -- left wall
+    walls[2] = {x=125, y=0, width=2, height=128} -- right wall
+    walls[3] = {x=0, y=0, width=128, height=2} -- top wall
+    walls[4] = {x=0, y=125, width=128, height=2} -- bottom wall
 end
 
 function draw_walls()
@@ -59,9 +61,16 @@ function make_player()
     player.direction = "right"
     player.left_sprite = 5
     player.right_sprite = 6
-    player.up_sprite = 7
-    player.down_sprite = 8
+    -- player.up_sprite = 7
+    player.up_sprite_1 = 23
+    player.up_sprite_2 = 39
+    -- player.down_sprite = 8
+    player.down_sprite_1 = 24
+    player.down_sprite_2 = 40
     player.current_sprite = player.right_sprite
+    
+    player.current_direction_pixel_count = 0
+    player.sprite_change_interval = 6
 end
 
 function move_player()
@@ -69,22 +78,49 @@ function move_player()
     local new_y = player.y
     local old_x = player.x
     local old_y = player.y
+
+    local old_sprite = player.current_sprite
+    local old_direction = player.direction
     
     if btn(0) then
         new_x = player.x - 1
+        player.direction = "left"
         player.current_sprite = player.left_sprite
     end
     if btn(1) then
         new_x = player.x + 1
+        player.direction = "right"
         player.current_sprite = player.right_sprite
     end
     if btn(2) then
         new_y = player.y - 1
-        player.current_sprite = player.up_sprite
+        player.direction = "up"
+        if player.current_direction_pixel_count >= player.sprite_change_interval then
+            player.current_direction_pixel_count = 0
+            if player.current_sprite == player.up_sprite_1 then
+                player.current_sprite = player.up_sprite_2
+            else
+                player.current_sprite = player.up_sprite_1
+            end
+        end
     end
     if btn(3) then
         new_y = player.y + 1
-        player.current_sprite = player.down_sprite
+        player.direction = "down"
+        if player.current_direction_pixel_count >= player.sprite_change_interval then
+            player.current_direction_pixel_count = 0
+            if player.current_sprite == player.down_sprite_1 then
+                player.current_sprite = player.down_sprite_2
+            else
+                player.current_sprite = player.down_sprite_1
+            end
+        end
+    end
+
+    if player.direction ~= old_direction then
+        player.current_direction_pixel_count = 0
+    else
+        player.current_direction_pixel_count = player.current_direction_pixel_count + 1
     end
     
     -- Check collision before applying movement
@@ -172,6 +208,111 @@ function draw_ducklings()
     -- Draw following ducklings
     for _, duckling in ipairs(following_ducklings) do
         spr(duckling.current_sprite, duckling.x, duckling.y)
+    end
+end
+
+function check_duckling_wall_collision(x, y)
+    -- Duckling sprite is 8x8 pixels
+    local duckling_size = 8
+    
+    for _, wall in ipairs(walls) do
+        -- Check if duckling bounding box overlaps with wall
+        if x < wall.x + wall.width and 
+           x + duckling_size > wall.x and
+           y < wall.y + wall.height and
+           y + duckling_size > wall.y then
+            return true
+        end
+    end
+    return false
+end
+
+function get_valid_directions(duckling)
+    -- Returns a list of valid directions that don't hit walls
+    local valid_directions = {}
+    local duckling_size = 8
+    local test_distance = 1
+    
+    -- Test each direction: 0=left, 1=right, 2=down, 3=up
+    for dir = 0, 3 do
+        local test_x = duckling.x
+        local test_y = duckling.y
+        
+        if dir == 0 then
+            test_x = duckling.x - test_distance
+        elseif dir == 1 then
+            test_x = duckling.x + test_distance
+        elseif dir == 2 then
+            test_y = duckling.y + test_distance
+        elseif dir == 3 then
+            test_y = duckling.y - test_distance
+        end
+        
+        if not check_duckling_wall_collision(test_x, test_y) then
+            add(valid_directions, dir)
+        end
+    end
+    
+    return valid_directions
+end
+
+function move_free_ducklings()
+    local duckling_size = 8
+    local move_speed = 1
+    local direction_change_probability = 0.02  -- 2% chance per frame to change direction
+    
+    for _, duckling in ipairs(ducklings) do
+        -- Skip if this is not a duckling object (like sprite properties)
+        if duckling.x and duckling.y and not duckling.following then
+            -- Small probability to randomly change direction each frame
+            if rnd(1) < direction_change_probability then
+                local valid_directions = get_valid_directions(duckling)
+                if #valid_directions > 0 then
+                    duckling.direction = valid_directions[flr(rnd(#valid_directions)) + 1]
+                end
+            end
+            
+            local new_x = duckling.x
+            local new_y = duckling.y
+            
+            -- Move based on current direction
+            if duckling.direction == 0 then
+                new_x = duckling.x - move_speed
+            elseif duckling.direction == 1 then
+                new_x = duckling.x + move_speed
+            elseif duckling.direction == 2 then
+                new_y = duckling.y + move_speed
+            elseif duckling.direction == 3 then
+                new_y = duckling.y - move_speed
+            end
+            
+            -- Check if movement would cause wall collision
+            if check_duckling_wall_collision(new_x, new_y) then
+                -- Pick a random valid direction
+                local valid_directions = get_valid_directions(duckling)
+                if #valid_directions > 0 then
+                    duckling.direction = valid_directions[flr(rnd(#valid_directions)) + 1]
+                else
+                    -- If no valid directions, stay in place (shouldn't happen, but safety check)
+                    duckling.direction = flr(rnd(4))
+                end
+            else
+                -- Move duckling
+                duckling.x = new_x
+                duckling.y = new_y
+            end
+            
+            -- Update sprite based on direction
+            if duckling.direction == 0 then
+                duckling.current_sprite = ducklings.left_sprite
+            elseif duckling.direction == 1 then
+                duckling.current_sprite = ducklings.right_sprite
+            elseif duckling.direction == 2 then
+                duckling.current_sprite = ducklings.down_sprite
+            elseif duckling.direction == 3 then
+                duckling.current_sprite = ducklings.up_sprite
+            end
+        end
     end
 end
 
