@@ -1,12 +1,14 @@
 function _init()
     game_over=false
-    make_walls()
+    make_outer_walls()
+    make_maze()
     make_player()
     make_ducklings()
     following_ducklings = {}
     player_trail = {}
     trail_length = 110
     player_moved = false
+    poke(0x5f2d, 1) -- enables mouse input
 end
 
 function _update()
@@ -26,11 +28,18 @@ function _draw()
     cls(12)
     -- cls()
     draw_walls()
+    draw_maze()
     draw_ducklings()
     draw_player()
+
+    mouse_x = stat(32)
+    mouse_y = stat(33)
+    rectfill(mouse_x, mouse_y, mouse_x + 0.5, mouse_y + 0.5, 1)
+    print("mouse_x: " .. mouse_x .. " mouse_y: " .. mouse_y, 8, 8)
+
 end
 
-function make_walls()
+function make_outer_walls()
     walls = {}
     walls[1] = {x=0, y=0, width=2, height=128} -- left wall
     walls[2] = {x=125, y=0, width=2, height=128} -- right wall
@@ -39,6 +48,7 @@ function make_walls()
 end
 
 function draw_walls()
+    color(13)
     for _, wall in ipairs(walls) do
         rectfill(wall.x, wall.y, wall.x + wall.width, wall.y + wall.height)
     end
@@ -52,6 +62,158 @@ function check_player_wall_collision()
     end
     return false
 end
+
+function make_maze()
+    -- eligible maze surface is 120 x 120 pixels
+    -- specifically, from 4,4, to 123, 123
+    -- let's create a maze out of 8x8 tiles
+    -- so, let's create a grid of 15 x 15 tiles
+    -- let's use Prim's algorithm to generate the maze using the grid
+    local grid_width = 15
+    local grid_height = 15
+    local cell_size = 8
+    local maze_start_x = 4
+    local maze_start_y = 4
+    
+    -- Initialize visited grid (all cells unvisited)
+    local visited = {}
+    for x = 0, grid_width - 1 do
+        visited[x] = {}
+        for y = 0, grid_height - 1 do
+            visited[x][y] = false
+        end
+    end
+
+    -- Initialize maze_walls table to store all walls
+    maze_walls = {}
+    
+    -- Track which walls should be removed (become passages)
+    local removed_walls = {}
+
+    -- Create all possible walls (between cells)
+    -- Each cell has walls on its right and bottom (to avoid duplicates)
+    local walls = {}
+    for x = 0, grid_width - 1 do
+        for y = 0, grid_height - 1 do
+            -- Right wall
+            if x < grid_width - 1 then
+                add(walls, {
+                    cell1 = {x = x, y = y},
+                    cell2 = {x = x + 1, y = y},
+                    direction = "vertical",
+                    pixel_x = maze_start_x + (x + 1) * cell_size - 1,
+                    pixel_y = maze_start_y + y * cell_size,
+                    pixel_width = 2,
+                    pixel_height = cell_size
+                })
+            end
+            -- Bottom wall
+            if y < grid_height - 1 then
+                add(walls, {
+                    cell1 = {x = x, y = y},
+                    cell2 = {x = x, y = y + 1},
+                    direction = "horizontal",
+                    pixel_x = maze_start_x + x * cell_size,
+                    pixel_y = maze_start_y + (y + 1) * cell_size - 1,
+                    pixel_width = cell_size,
+                    pixel_height = 2
+                })
+            end
+        end
+    end
+    
+    -- Prim's algorithm
+    -- Start with a random cell
+    local start_x = flr(rnd(grid_width))
+    local start_y = flr(rnd(grid_height))
+    visited[start_x][start_y] = true
+    
+    -- Add walls of starting cell to frontier
+    local frontier = {}
+    local function add_walls_to_frontier(cx, cy)
+        for _, wall in ipairs(walls) do
+            local c1 = wall.cell1
+            local c2 = wall.cell2
+            if (c1.x == cx and c1.y == cy) or (c2.x == cx and c2.y == cy) then
+                -- Check if wall is not already in frontier
+                local already_in = false
+                for _, fw in ipairs(frontier) do
+                    if fw == wall then
+                        already_in = true
+                        break
+                    end
+                end
+                if not already_in then
+                    add(frontier, wall)
+                end
+            end
+        end
+    end
+    
+    add_walls_to_frontier(start_x, start_y)
+    
+    -- Process frontier until empty
+    while #frontier > 0 do
+        -- Pick random wall from frontier
+        local wall_idx = flr(rnd(#frontier)) + 1
+        local wall = frontier[wall_idx]
+        del(frontier, wall)
+        
+        local c1 = wall.cell1
+        local c2 = wall.cell2
+        local c1_visited = visited[c1.x][c1.y]
+        local c2_visited = visited[c2.x][c2.y]
+        
+        -- If wall separates visited from unvisited cell
+        if c1_visited ~= c2_visited then
+            -- Remove wall (mark it as removed, don't add to maze_walls)
+            add(removed_walls, wall)
+            -- Mark unvisited cell as visited
+            local unvisited_cell = c1_visited and c2 or c1
+            visited[unvisited_cell.x][unvisited_cell.y] = true
+            
+            -- Add walls of newly visited cell to frontier
+            add_walls_to_frontier(unvisited_cell.x, unvisited_cell.y)
+        end
+        -- If both cells are visited, the wall should remain (we'll add it later)
+    end
+    
+    -- Add all walls that weren't removed to maze_walls
+    for _, wall in ipairs(walls) do
+        local was_removed = false
+        for _, rw in ipairs(removed_walls) do
+            if rw == wall then
+                was_removed = true
+                break
+            end
+        end
+        if not was_removed then
+            add(maze_walls, {
+                x = wall.pixel_x,
+                y = wall.pixel_y,
+                width = wall.pixel_width,
+                height = wall.pixel_height
+            })
+        end
+    end
+    
+    -- Add maze walls to main walls table for collision detection
+    for _, mw in ipairs(maze_walls) do
+        add(walls, mw)
+    end
+
+end
+
+function draw_maze()
+    color(3)
+    if maze_walls then
+        for _, wall in ipairs(maze_walls) do
+            rectfill(wall.x, wall.y, wall.x + wall.width, wall.y + wall.height)
+        end
+    end
+end
+
+
 
 function make_player()
     player = {}
